@@ -1,69 +1,104 @@
-# Author: Sasta Dev || https://t.me/SastaDev
-# Author's github: https://github.com/SastaDev
-# Created on: Saturday, 29 April, 2023.
-# Written in python using pyrogram.
-# This python script only supports pyrogram versions lower than v2.0.
-# © Sasta Dev ~ 2023.
+# Author: https://github.com/SastaDev
+# Created on: Tue, Sep 5, 2023.
+# © Kangers Network ~ https://t.me/KangersNetwork
+# For pyrogram versions <= 1.4.16
 
-import uuid
-from pyrogram import Client, filters
-from pyrogram.types import (InlineKeyboardMarkup, InlineKeyboardButton, Message)
+from typing import BinaryIO, Dict, List
+import time
+import os
+from uuid import uuid4
+
 import httpx
 
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram import Client, filters
+
+# Replace `YourRobot` with your robot and import pyrogram client from it.
 from YourRobot import pbot
 
-API_URL = 'https://sasta.tk/google_reverse'
+API_URL: str = "https://sasta-api.vercel.app/google_reverse"
+
+COMMANDS: List[str] = [
+    "reverse",
+    "grs",
+    "pp"
+    ]
+
+async_client: httpx.AsyncClient = httpx.AsyncClient(timeout=120)
 
 class STRINGS:
-    REPLY_TO_MEDIA = 'Reply to a message having photo, sticker or document.'
-    THESE_MEDIA_TYPES_ONLY = 'Only <b>photo</b>, <b>sticker</b> and <b>document</b> media types are allowed.'
-    GIF_NOT_SUPPORTED = 'GIF reverse is currently not available.'
-    DOWNLOADING_MEDIA = '<b>• Downloading media...</b>'
-    UPLOADING_MEDIA = '<b>• Uploading media...</b>'
-    API_ERROR = '<b>An API Error occured while requesting:</b>:\n{}'
-    SUPPORT_CHAT = '<b>Support Chat:</b> @HelpSupportChat'
-    REVERSE_RESULT = '''
-<b>Search Keyword:</b> <code>{}</code>
-<b>Results link:</b> <a href='{}'>Link</a>.
+    REPLY_TO_MEDIA: str = "ℹ️ Please reply to a message that contains one of the supported media types, such as a photo, sticker, or image file."
+    UNSUPPORTED_MEDIA_TYPE: str = "⚠️ <b>Unsupported media type!</b>\nℹ️ Please reply with a supported media type: image, sticker, or image file."
+    
+    DOWNLOADING_MEDIA: str = "⏳ Downloading media..."
+    UPLOADING_TO_API_SERVER: str = "📡 Uploading media to <b>API Server</b>... 📶"
+    PARSING_RESULT: str = "💻 Parsing result..."
+    
+    EXCEPTION_OCCURRED: str = "❌ <b>Exception occurred!</b>\n\n<b>Exception:</b> {}"
+    
+    RESULT: str = """
+🔤 <b>Query:</b> <code>{query}</code>
+🔗 <b>Page Link:</b> <a href="{page_url}">Link</a>
 
-<b>Credits:</b> @SastaDev
-    '''
-
-COMMANDS = ['reverse', 'grs', 'pp']
+⌛️ <b>Time Taken:</b> <code>{time_taken}</code> seconds.
+🧑‍💻 <b>Credits:</b> @KangersNetwork
+    """
+    OPEN_PAGE: str = "↗️ Open Page"
 
 @pbot.on_message(filters.command(COMMANDS))
-async def on_reverse(client: Client, message: Message) -> Message:
-    if not message.reply_to_message and not message.reply_to_message.media:
+async def on_reverse(client: Client, message: Message) -> None:
+    if not message.reply_to_message:
         await message.reply(STRINGS.REPLY_TO_MEDIA)
         return
-    media_type = message.reply_to_message.media
-    if media_type not in ('photo', 'sticker', 'document'):
-        if media_type == 'animation':
-            await message.reply(STRINGS.GIF_NOT_SUPPORTED)
-            return
-        await message.reply(STRINGS.THESE_MEDIA_TYPES_ONLY)
+    elif message.reply_to_message.media not in ("photo", "sticker", "document"):
+        await message.reply(STRINGS.UNSUPPORTED_MEDIA_TYPE)
         return
-    status_msg = await message.reply(STRINGS.DOWNLOADING_MEDIA)
-    file_path = f'downloads/{uuid.uuid4()}'
-    await message.reply_to_message.download(file_path)
-    await status_msg.edit(STRINGS.UPLOADING_MEDIA)
-    async with httpx.AsyncClient(timeout=30) as async_client:
-        with open(file_path, 'rb') as file:
-            files = {'file': file}
-            response = await async_client.post(API_URL, files=files)
+    
+    start_time: float = time.time()
+    status_msg: Message = await message.reply(STRINGS.DOWNLOADING_MEDIA)
+    file_path: str = f"temp_download/{uuid4()}"
+    try:
+        await message.reply_to_message.download(file_path)
+    except Exception as exc:
+        text: str = STRINGS.EXCEPTION_OCCURRED.format(exc)
+        await message.reply(text)
         try:
-            response_json = response.json()
-        except:
-            await message.reply(STRINGS.API_ERROR.format(response.text) + '\n\n' +  STRINGS.SUPPORT_CHAT)
-            return
-        if response.status_code != 200:
-            await message.reply(STRINGS.API_ERROR.format(response_json['error']) + '\n\n' + STRINGS.SUPPORT_CHAT)
-            return
-        search_keyword = response_json['keyword']
-        url = response_json['url']
-    text = STRINGS.REVERSE_RESULT.format(search_keyword, url)
-    reply_markup = [
-        [InlineKeyboardButton('Open Link', url=url)]
+            os.remove(file_path)
+        except FileNotFoundError:
+            pass
+        return
+    
+    await status_msg.edit(STRINGS.UPLOADING_TO_API_SERVER)
+    files: Dict[str, BinaryIO] = {"file": open(file_path, "rb")}
+    response: httpx.Response = await async_client.post(API_URL, files=files)
+    os.remove(file_path)
+    
+    if response.status_code == 404:
+        text: str = STRINGS.EXCEPTION_OCCURRED.format(response.json()["error"])
+        await message.reply(text)
+        await status_msg.delete()
+        return
+    elif response.status_code != 200:
+        text: str = STRINGS.EXCEPTION_OCCURRED.format(response.text)
+        await message.reply(text)
+        await status_msg.delete()
+        return
+    
+    await status_msg.edit(STRINGS.PARSING_RESULT)
+    response_json: Dict[str, str] = response.json()
+    query: str = response_json["query"]
+    page_url: str = response_json["url"]
+    
+    end_time: float = time.time() - start_time
+    time_taken: str = "{:.2f}".format(end_time)
+    
+    text: str = STRINGS.RESULT.format(
+        query=query,
+        page_url=page_url,
+        time_taken=time_taken
+        )
+    buttons: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(STRINGS.OPEN_PAGE, url=page_url)]
         ]
-    await message.reply(text, reply_markup=InlineKeyboardMarkup(reply_markup))
+    await message.reply(text, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(buttons))
     await status_msg.delete()
